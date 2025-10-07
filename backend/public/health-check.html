@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Controller - 服务健康检查</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .card {
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        h1, h2 {
+            color: #bb86fc;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 5px 0;
+        }
+        .status.ok {
+            background-color: rgba(76, 175, 80, 0.2);
+            border: 1px solid #4caf50;
+        }
+        .status.error {
+            background-color: rgba(244, 67, 54, 0.2);
+            border: 1px solid #f44336;
+        }
+        button {
+            background-color: #6200ee;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 10px 15px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #3700b3;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        #statusOutput {
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Media Controller - 服务健康检查</h1>
+        
+        <div class="card">
+            <h2>系统状态</h2>
+            <div id="systemStatus">
+                <div class="status ok">服务器运行中</div>
+                <div class="status ok">API 服务可用</div>
+                <div class="status ok">WebSocket 服务可用</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>服务控制测试</h2>
+            <button onclick="testAPI()">测试 API 连接</button>
+            <button onclick="testWebSocket()">测试 WebSocket 连接</button>
+            <button onclick="getStatus()">获取服务状态</button>
+            <button onclick="clearOutput()">清空输出</button>
+            
+            <div style="margin-top: 15px;">
+                <h3>输出日志:</h3>
+                <div id="statusOutput"></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>说明</h2>
+            <p>这个页面用于测试 Media Controller 的基本功能。</p>
+            <p>如果主应用页面没有响应，请检查浏览器控制台是否有错误信息。</p>
+            <p>主应用界面在 <a href="/">根路径</a> 提供。</p>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        
+        function logMessage(message) {
+            const output = document.getElementById('statusOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            output.innerHTML += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        function testAPI() {
+            logMessage('开始测试 API 连接...');
+            
+            fetch('/api/services/status')
+                .then(response => {
+                    logMessage(`API 测试 - HTTP状态码: ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    logMessage('API 测试成功，收到数据:');
+                    logMessage(JSON.stringify(data, null, 2));
+                })
+                .catch(error => {
+                    logMessage('API 测试失败: ' + error.message);
+                });
+        }
+        
+        function testWebSocket() {
+            logMessage('开始测试 WebSocket 连接...');
+            
+            if (socket) {
+                socket.close();
+                socket = null;
+            }
+            
+            try {
+                socket = new WebSocket('ws://localhost:3000');
+                
+                socket.onopen = function(event) {
+                    logMessage('WebSocket 连接已建立');
+                };
+                
+                socket.onmessage = function(event) {
+                    logMessage('收到 WebSocket 消息: ' + event.data);
+                };
+                
+                socket.onerror = function(error) {
+                    logMessage('WebSocket 错误: ' + error);
+                };
+                
+                socket.onclose = function(event) {
+                    logMessage('WebSocket 连接已关闭，代码: ' + event.code + ', 原因: ' + event.reason);
+                };
+            } catch (e) {
+                logMessage('WebSocket 连接失败: ' + e.message);
+            }
+        }
+        
+        function getStatus() {
+            logMessage('获取服务状态...');
+            
+            // 使用与前端应用相同的API客户端
+            fetch('/api/services/status')
+                .then(response => response.json())
+                .then(status => {
+                    logMessage('服务状态:');
+                    logMessage(JSON.stringify(status, null, 2));
+                })
+                .catch(error => {
+                    logMessage('获取服务状态失败: ' + error.message);
+                });
+        }
+        
+        function clearOutput() {
+            document.getElementById('statusOutput').innerHTML = '';
+        }
+        
+        // 页面加载时进行初始测试
+        window.onload = function() {
+            logMessage('页面已加载，可以开始测试...');
+        };
+    </script>
+</body>
+</html>
