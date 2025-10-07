@@ -56,8 +56,20 @@ app.get('*', (req, res) => {
 io.on('connection', (socket) => {
   console.log('用户连接:', socket.id);
 
-  // 发送初始状态
-  socket.emit('status-update', processManager.getStatus());
+  // 发送初始状态 - 等待外部服务检测完成
+  setTimeout(async () => {
+    try {
+      const initialStatus = await processManager.getStatus();
+      socket.emit('status-update', initialStatus);
+      console.log('发送初始状态给新连接的客户端:', initialStatus);
+    } catch (error) {
+      console.error('获取初始状态失败:', error);
+      socket.emit('status-update', { 
+        comfyui: { running: false, pid: null, startTime: null }, 
+        'media-api': { running: false, pid: null, startTime: null } 
+      });
+    }
+  }, 100); // 短暂延迟，确保外部服务检测完成
 
   socket.on('disconnect', () => {
     console.log('用户断开连接:', socket.id);

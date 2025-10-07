@@ -22,7 +22,7 @@ router.get('/:service', async (req, res) => {
       return res.status(400).json({ error: '日志行数必须是正整数' });
     }
 
-    const log = processManager.getLog(service, logLines);
+    const log = await processManager.getLog(service, logLines);
     res.json({ service, lines: logLines, log });
   } catch (error) {
     console.error('获取日志失败:', error);

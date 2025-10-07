@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import styled from 'styled-components';
 import { Card, Button as StyledButton } from '../styles/global';
+import { logAPI } from '../services/api';
 
 const LogContainer = styled.div`
   display: flex;
@@ -149,6 +150,47 @@ const LogViewer = forwardRef(({ service, title = "服务日志" }, ref) => {
       setLogs([]);
     },
     getLogs: () => logs,
+    // 添加刷新日志的方法
+    refreshLogs: async (serviceName) => {
+      if (serviceName) {
+        try {
+          console.log(`正在获取 ${serviceName} 的日志...`);
+          const response = await logAPI.getLog(serviceName, 100); // 获取最近100条日志
+          console.log(`${serviceName} 日志响应:`, response.data);
+          
+          const logContent = response.data.log;
+          
+          // 将历史日志按行分割并逐行添加到日志查看器
+          const logLines = logContent.split('\n').filter(line => line.trim() !== '');
+          console.log(`${serviceName} 解析出的行数:`, logLines.length);
+          
+          // 清空现有日志
+          setLogs([]);
+          
+          // 逐行添加历史日志
+          const newLogs = logLines.map(logLine => ({
+            id: Date.now() + Math.random(),
+            message: logLine,
+            timestamp: new Date().toISOString(),
+            type: getLogType(logLine) // 根据内容自动判断日志类型
+          })).slice(-500); // 限制为最多500条日志
+          
+          console.log(`${serviceName} 创建的新日志条目数:`, newLogs.length);
+          setLogs(newLogs);
+        } catch (error) {
+          console.error(`获取${serviceName}历史日志失败:`, error);
+          // 即使获取失败，也要确保清空现有日志或显示错误信息
+          setLogs([{
+            id: Date.now(),
+            message: `获取日志失败: ${error.message}`,
+            timestamp: new Date().toISOString(),
+            type: 'error'
+          }]);
+        }
+      } else {
+        console.log('serviceName 未提供，无法刷新日志');
+      }
+    }
   }));
 
   // 根据日志内容判断日志类型

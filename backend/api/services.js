@@ -9,7 +9,7 @@ router.get('/status', async (req, res) => {
       return res.status(500).json({ error: 'ProcessManager 未初始化' });
     }
 
-    const status = processManager.getStatus();
+    const status = await processManager.getStatus();
     res.json(status);
   } catch (error) {
     console.error('获取服务状态失败:', error);
@@ -24,7 +24,7 @@ router.get('/comfyui/status', async (req, res) => {
       return res.status(500).json({ error: 'ProcessManager 未初始化' });
     }
 
-    const status = processManager.getStatus();
+    const status = await processManager.getStatus();
     res.json(status.comfyui);
   } catch (error) {
     console.error('获取 ComfyUI 状态失败:', error);
@@ -69,7 +69,7 @@ router.get('/media-api/status', async (req, res) => {
       return res.status(500).json({ error: 'ProcessManager 未初始化' });
     }
 
-    const status = processManager.getStatus();
+    const status = await processManager.getStatus();
     res.json(status['media-api']);
   } catch (error) {
     console.error('获取 Media-API 状态失败:', error);

@@ -1,6 +1,9 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const config = require('./config');
+const { exec } = require('child_process');
+const util = require('util');
+const execAsync = util.promisify(exec);
 
 class ProcessManager {
   constructor(io, portProxyManager, wslManager) {
@@ -20,6 +23,20 @@ class ProcessManager {
       'media-api': []
     };
     this.maxLogLines = 1000; // 限制日志缓冲区大小
+    
+    // 立即检测外部运行的服务
+    this.detectExternalServices();
+    // 启动定期检测外部服务的定时器（每10秒检测一次）
+    this.startExternalServiceDetection();
+  }
+  
+  // 开始定期检测外部运行的服务
+  startExternalServiceDetection() {
+    setInterval(async () => {
+      await this.detectExternalServices();
+      // 如果状态发生变化，发送状态更新
+      this.sendStatusUpdate();
+    }, 10000); // 每10秒检测一次
   }
 
   // 启动 ComfyUI 服务
@@ -379,7 +396,10 @@ class ProcessManager {
   }
 
   // 获取服务状态
-  getStatus() {
+  async getStatus() {
+    // 检测外部运行的服务
+    await this.detectExternalServices();
+    
     return {
       comfyui: { ...this.status.comfyui },
       'media-api': { ...this.status['media-api'] }
@@ -387,13 +407,49 @@ class ProcessManager {
   }
 
   // 获取指定服务的日志
-  getLog(serviceName, lines = 100) {
+  async getLog(serviceName, lines = 100) {
+    // 如果是管理器启动的进程，返回内存中的日志
+    if (this.logBuffers[serviceName] && 
+        ((serviceName === 'comfyui' && this.processes.comfyui) || 
+         (serviceName === 'media-api' && this.processes['media-api']))) {
+      const logLength = this.logBuffers[serviceName].length;
+      const start = Math.max(0, logLength - lines);
+      const result = this.logBuffers[serviceName].slice(start).join('');
+      console.log(`返回 ${serviceName} 的 ${result.split('\n').length - 1} 行日志`);
+      return result;
+    }
+    
+    // 如果是外部运行的进程，尝试从日志文件获取日志（如果有的话）
+    // 为了兼容性，返回一个提示信息
+    if (this.status[serviceName]?.running) {
+      // 检查是否为外部运行的进程
+      const externalRunning = await this.isExternalServiceRunning(serviceName);
+      if (externalRunning && !this.processes[serviceName]) {
+        console.log(`检测到 ${serviceName} 外部运行，但无法获取日志`);
+        return `[INFO] 检测到 ${serviceName} 服务正在外部运行，但当前管理器未跟踪其日志输出。\n要获取完整日志，请通过管理器启动服务。\n[INFO] 服务状态: 运行中`;
+      }
+    }
+    
     if (this.logBuffers[serviceName]) {
       const logLength = this.logBuffers[serviceName].length;
       const start = Math.max(0, logLength - lines);
-      return this.logBuffers[serviceName].slice(start).join('');
+      const result = this.logBuffers[serviceName].slice(start).join('');
+      console.log(`返回 ${serviceName} 的 ${result.split('\n').length - 1} 行历史日志`);
+      return result;
     }
+    
+    console.log(`没有找到 ${serviceName} 的日志数据`);
     return '';
+  }
+
+  // 检查特定服务是否作为外部进程运行
+  async isExternalServiceRunning(serviceName) {
+    if (serviceName === 'comfyui') {
+      return await this.isExternalComfyUIRunning('');
+    } else if (serviceName === 'media-api') {
+      return await this.isExternalMediaAPIRunning('');
+    }
+    return false;
   }
 
   // 添加日志到缓冲区
@@ -417,6 +473,112 @@ class ProcessManager {
   // 发送状态更新到所有连接的客户端
   sendStatusUpdate() {
     this.io.emit('status-update', this.getStatus());
+  }
+
+  // 检测系统中是否运行着未被管理器跟踪的服务进程
+  async detectExternalServices() {
+    try {
+      // 查找可能的 ComfyUI 进程
+      const comfyUIRunning = this.status.comfyui.running || await this.isExternalComfyUIRunning();
+      // 查找可能的 Media-API 进程
+      const mediaAPIRunning = this.status['media-api'].running || await this.isExternalMediaAPIRunning();
+      
+      // 如果发现外部运行的进程，更新状态
+      if (!this.status.comfyui.running && comfyUIRunning) {
+        this.status.comfyui.running = true;
+        this.status.comfyui.startTime = new Date();
+        console.log('检测到外部运行的 ComfyUI 进程');
+      }
+      
+      if (!this.status['media-api'].running && mediaAPIRunning) {
+        this.status['media-api'].running = true;
+        this.status['media-api'].startTime = new Date();
+        console.log('检测到外部运行的 Media-API 进程');
+      }
+      
+      // 如果管理器跟踪的进程不存在但状态标记为运行，则更新状态
+      if (this.status.comfyui.running && !this.processes.comfyui) {
+        const actualRunning = await this.isExternalComfyUIRunning();
+        if (!actualRunning) {
+          this.status.comfyui.running = false;
+          this.status.comfyui.pid = null;
+          this.status.comfyui.startTime = null;
+          console.log('已更新 ComfyUI 状态为未运行（外部进程已停止）');
+        }
+      }
+      
+      if (this.status['media-api'].running && !this.processes['media-api']) {
+        const actualRunning = await this.isExternalMediaAPIRunning();
+        if (!actualRunning) {
+          this.status['media-api'].running = false;
+          this.status['media-api'].pid = null;
+          this.status['media-api'].startTime = null;
+          console.log('已更新 Media-API 状态为未运行（外部进程已停止）');
+        }
+      }
+    } catch (error) {
+      console.error('检测外部服务进程时出错:', error);
+    }
+  }
+
+  // 检查是否有外部的 ComfyUI 进程在运行
+  async isExternalComfyUIRunning() {
+    try {
+      // 首先使用tasklist命令获取进程列表
+      const { stdout: tasklistOutput } = await execAsync('tasklist /fo csv /nh');
+      
+      // 检查 Python 进程中是否包含 ComfyUI 的启动脚本
+      const comfyUIScriptPath = config.comfyUI.startScript.replace(/\\/g, '\\\\'); // 转义路径
+      if (tasklistOutput.toLowerCase().includes('python') && tasklistOutput.toLowerCase().includes(comfyUIScriptPath.toLowerCase())) {
+        return true;
+      }
+      
+      // 如果 wmic 命令失败，尝试使用 PowerShell 替代
+      try {
+        const { stdout: psOutput } = await execAsync(`powershell "Get-WmiObject -Class Win32_Process -Filter \\"Name='python.exe'\\" | Select-Object CommandLine | Where-Object {$_.CommandLine -like '*${comfyUIScriptPath.replace(/'/g, "'")}*'}"`);
+        if (psOutput && psOutput.trim() !== '') {
+          return true;
+        }
+      } catch (psError) {
+        console.warn('PowerShell 获取进程命令行失败:', psError.message);
+        // 如果 PowerShell 也失败，仅依赖 tasklist 的结果
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('检查外部 ComfyUI 进程时出错:', error);
+      return false;
+    }
+  }
+
+  // 检查是否有外部的 Media-API 进程在运行
+  async isExternalMediaAPIRunning() {
+    try {
+      // 首先使用tasklist命令获取进程列表
+      const { stdout: tasklistOutput } = await execAsync('tasklist /fo csv /nh');
+      
+      // 检查 Python 进程中是否包含 Media-API 的启动脚本
+      const mediaAPIScriptPath = config.mediaAPI.startScript.replace(/\\/g, '\\\\'); // 转义路径
+      if (tasklistOutput.toLowerCase().includes('python') && tasklistOutput.toLowerCase().includes(mediaAPIScriptPath.toLowerCase())) {
+        return true;
+      }
+      
+      // 如果 wmic 命令失败，尝试使用 PowerShell 替代
+      try {
+        const { stdout: psOutput } = await execAsync(`powershell "Get-WmiObject -Class Win32_Process -Filter \\"Name='python.exe'\\" | Select-Object CommandLine | Where-Object {$_.CommandLine -like '*${mediaAPIScriptPath.replace(/'/g, "'")}*'}"`);
+        if (psOutput && psOutput.trim() !== '') {
+          return true;
+        }
+      } catch (psError) {
+        console.warn('PowerShell 获取进程命令行失败:', psError.message);
+        // 如果 PowerShell 也失败，仅依赖 tasklist 的结果
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('检查外部 Media-API 进程时出错:', error);
+      return false;
+    }
   }
 
   // 停止所有服务
